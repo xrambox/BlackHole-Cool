@@ -1,0 +1,1183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Black Hole Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A Schwarzschild black hole and its accretion disk, ray traced live on your graphics card.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap">
+<style>
+/* Layout: one reading column (66ch) that widens for the live view and the ray explorer.
+   Dark-first, like an observing log; light theme is a printed lab sheet. */
+:root {
+  --bg: #0b0c11;
+  --surface: #11131a;
+  --raised: #171a23;
+  --line: #262a37;
+  --fg: #ece8df;
+  --muted: #9c9fae;
+  --faint: #5d6170;
+  --accent: #f0a24f;          /* a 4,000 K blackbody */
+  --series-exact: #c97b2b;
+  --series-gpu: #4f8ae8;       /* blueshift */
+  --good: #6bcb8b;
+  --bad: #ff7f6e;
+  --hole: #000000;
+  --ray: #6d7184;
+  --on-image: #f3efe6;
+  --on-image-muted: rgba(243, 239, 230, 0.66);
+  --glass: rgba(8, 9, 13, 0.72);
+  --font-display: "Instrument Serif", "Iowan Old Style", "Times New Roman", serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.1875rem;
+  --step-2: 1.625rem;
+  --step-3: clamp(2.1rem, 4.6vw, 3.6rem);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f3f4f7; --surface: #ffffff; --raised: #eceef3; --line: #d6d9e2;
+    --fg: #14161d; --muted: #555a6a; --faint: #8a8f9e; --accent: #a65400;
+    --series-exact: #b35c00; --series-gpu: #2f5fd0; --good: #1f7a42; --bad: #b3261e;
+    --hole: #05060a; --ray: #9aa0b2; color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f3f4f7; --surface: #ffffff; --raised: #eceef3; --line: #d6d9e2;
+  --fg: #14161d; --muted: #555a6a; --faint: #8a8f9e; --accent: #a65400;
+  --series-exact: #b35c00; --series-gpu: #2f5fd0; --good: #1f7a42; --bad: #b3261e;
+  --hole: #05060a; --ray: #9aa0b2; color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 var(--step-0)/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+table, input, button { font: inherit; color: inherit; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.wrap { max-width: 1120px; margin: 0 auto; }
+.col { max-width: 66ch; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+header.top { padding-block: 40px 22px; display: grid; gap: 14px; }
+.eyebrow {
+  font: 500 var(--step--1)/1.3 var(--font-mono);
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+.eyebrow b { color: var(--accent); font-weight: 500; }
+h1 {
+  font: 400 var(--step-3)/1.04 var(--font-display);
+  letter-spacing: -0.01em; margin: 0; text-wrap: balance; max-width: 19ch;
+}
+h1 em { font-style: italic; color: var(--accent); }
+.lede { margin: 0; color: var(--muted); font-size: var(--step-1); line-height: 1.55; }
+
+h2 {
+  font: 400 var(--step-2)/1.15 var(--font-display);
+  margin: 0; text-wrap: balance;
+}
+h3 { font: 600 var(--step--1)/1.3 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+section { padding-block: 56px 8px; display: grid; gap: 18px; }
+section > p, .col > p { margin: 0; }
+p + p { margin-top: 0; }
+var, .v { font-family: var(--font-display); font-style: italic; font-size: 1.12em; }
+
+/* ---------- live view ---------- */
+.stage {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 78vh;
+  background: #000; border-radius: 6px; overflow: hidden;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.stage canvas.dragging { cursor: grabbing; }
+.hud {
+  position: absolute; left: 14px; top: 12px; display: flex; gap: 22px;
+  pointer-events: none; color: var(--on-image);
+}
+.hud div { display: grid; gap: 0; }
+.hud span { font: 500 0.6875rem/1.3 var(--font-mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--on-image-muted); }
+.hud strong { font: 400 1.35rem/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
+.tip {
+  position: absolute; max-width: 280px; padding: 10px 12px; border-radius: 6px;
+  background: var(--glass); color: var(--on-image); backdrop-filter: blur(6px);
+  font-size: 0.8125rem; line-height: 1.45; pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.tip b { display: block; font: 500 0.6875rem/1.3 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: #f0a24f; margin-bottom: 3px; }
+.nogl {
+  position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
+  padding: 24px; color: var(--on-image); background: radial-gradient(circle at 50% 50%, #111 0, #000 70%);
+}
+.nogl strong { font: 400 1.6rem/1.2 var(--font-display); }
+.nogl p { margin: 6px 0 0; color: var(--on-image-muted); }
+
+.controls {
+  margin-top: 14px; padding: 18px 20px 16px; display: grid; gap: 18px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+}
+.controls-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 16px; }
+.presets, .toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset {
+  padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent;
+  cursor: pointer; font-weight: 500; font-size: 0.9rem; transition: background .15s, color .15s, border-color .15s;
+}
+.preset:hover { border-color: var(--faint); }
+.preset[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.toggle { position: relative; display: inline-flex; align-items: center; gap: 9px; padding: 7px 12px 7px 9px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; background: var(--surface); font-size: 0.9rem; white-space: nowrap; }
+.toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.toggle .sw { width: 26px; height: 15px; border-radius: 8px; background: var(--line); position: relative; transition: background .15s; flex: none; }
+.toggle .sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+.toggle input:checked + .sw { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.toggle input:checked + .sw::after { transform: translateX(11px); background: var(--accent); }
+.toggle input:focus-visible + .sw { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.sliders { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 28px; }
+.slider { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: baseline; }
+.slider label { font-size: 0.9rem; color: var(--muted); }
+.slider output { font: 400 0.9rem/1.3 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg); }
+.slider input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
+.help { color: var(--muted); font-size: 0.875rem; margin: 0; max-width: 110ch; }
+
+/* ---------- equation ---------- */
+.equation {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 0.3em;
+  font: 400 clamp(2.2rem, 6vw, 3.4rem)/1.1 var(--font-display);
+  padding-block: 10px 6px;
+}
+.term { display: inline-grid; justify-items: center; gap: 6px; transition: opacity .2s; }
+.term small {
+  font: 500 0.6875rem/1.2 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); border-top: 1px solid var(--faint); padding-top: 6px; width: 100%; text-align: center; white-space: nowrap;
+}
+.term.gravity { color: var(--accent); }
+.term.gravity small { color: var(--accent); border-color: var(--accent); }
+.term.off { opacity: 0.28; text-decoration: line-through; text-decoration-thickness: 2px; }
+.equation i { font-style: italic; }
+.frac { font-style: normal; font-size: 0.85em; }
+
+/* ---------- ray explorer ---------- */
+.explorer { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.diagram { position: relative; overflow: hidden; }
+.diagram svg { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; }
+.figcap { font-size: 0.8125rem; color: var(--muted); padding: 10px 14px; border-top: 1px solid var(--line); margin: 0; }
+.side { display: grid; gap: 18px; min-width: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8125rem; color: var(--muted); margin: 0; padding: 0; list-style: none; }
+.legend li { display: inline-flex; align-items: center; gap: 7px; }
+.sw-line { width: 18px; height: 2px; background: var(--series-exact); border-radius: 1px; }
+.sw-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--series-gpu); box-shadow: 0 0 0 2px var(--surface); }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-cap { font-size: 0.8125rem; color: var(--muted); margin: 4px 0 0; }
+.ctip { position: absolute; pointer-events: none; background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 6px 9px; font-size: 0.75rem; line-height: 1.45; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+.readouts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--line); }
+.readouts div { padding: 10px 12px 2px 0; display: grid; gap: 2px; }
+.readouts span { font-size: 0.75rem; color: var(--muted); }
+.readouts strong { font: 400 1.05rem/1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
+.pill { display: inline-flex; align-items: center; gap: 6px; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.pill.escape::before { background: var(--series-gpu); }
+.pill.capture::before { background: var(--hole); box-shadow: 0 0 0 1.5px var(--accent); }
+
+details { border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; color: var(--muted); font-size: 0.875rem; }
+.tablewrap { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.8125rem; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+th { font-weight: 500; color: var(--muted); font-size: 0.75rem; }
+th:first-child, td:first-child { text-align: left; padding-left: 0; }
+td.num { font-family: var(--font-mono); }
+
+/* ---------- self check ---------- */
+.checks table { font-size: 0.875rem; }
+.checks td:first-child { white-space: normal; min-width: 14ch; }
+.result { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.result.ok { color: var(--good); }
+.result.bad { color: var(--bad); }
+.result svg { width: 14px; height: 14px; }
+.note { color: var(--muted); font-size: 0.875rem; margin: 0; }
+
+/* ---------- modelled / not ---------- */
+.ledger { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.ledger ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.ledger li { padding-left: 18px; position: relative; color: var(--fg); }
+.ledger li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 8px; height: 2px; background: var(--accent); }
+.ledger .out li::before { background: var(--faint); }
+.ledger li b { font-weight: 600; }
+
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.875rem; }
+
+@media (max-width: 860px) {
+  .explorer { grid-template-columns: minmax(0, 1fr); }
+  .sliders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .stage { aspect-ratio: 4 / 5; }
+  .sliders { grid-template-columns: minmax(0, 1fr); }
+  .ledger { grid-template-columns: minmax(0, 1fr); }
+  .hud strong { font-size: 1.1rem; }
+  .readouts { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow"><b>Black Hole Lab</b> · Schwarzschild, non-rotating</div>
+    <h1>Every pixel here is one ray of light, <em>bent by gravity.</em></h1>
+    <p class="lede col">A black hole and its disk of hot gas, drawn live. Nothing in the image is painted in. For each pixel, your graphics card follows a ray of light backward through curved spacetime with the orbit equation from general relativity, then asks what that ray came from.</p>
+  </header>
+
+  <figure style="margin:0">
+    <div class="stage" id="stage">
+      <canvas id="view" tabindex="0" aria-label="Live ray-traced view of a black hole and its accretion disk. Drag to orbit, Ctrl and scroll to zoom, arrow keys also orbit."></canvas>
+      <div class="hud" aria-live="polite">
+        <div><span>Camera at</span><strong id="hudDist">22.0 rₛ</strong></div>
+        <div><span>Shadow spans</span><strong id="hudShadow">13.3°</strong></div>
+      </div>
+      <div class="tip" id="tip" hidden></div>
+      <div class="nogl" id="nogl" hidden>
+        <strong>The live view needs WebGL 2.</strong>
+        <p>The single-ray explorer further down still works.</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="controls-top">
+        <div class="presets" role="group" aria-label="Views">
+          <button type="button" class="preset" id="pTilted" data-preset="tilted" aria-pressed="true">Tilted</button>
+          <button type="button" class="preset" id="pEdge" data-preset="edge" aria-pressed="false">Edge-on</button>
+          <button type="button" class="preset" id="pAbove" data-preset="above" aria-pressed="false">From above</button>
+          <button type="button" class="preset" id="pSphere" data-preset="sphere" aria-pressed="false" title="Hover at 1.5 rₛ and look along the orbit: the shadow fills exactly half the sky">At the photon sphere</button>
+        </div>
+        <div class="toggles" role="group" aria-label="Physics switches">
+          <label class="toggle"><input type="checkbox" id="tBend" checked><span class="sw"></span>Bend light</label>
+          <label class="toggle"><input type="checkbox" id="tDoppler" checked><span class="sw"></span>Doppler shift</label>
+          <label class="toggle"><input type="checkbox" id="tOrbit" checked><span class="sw"></span>Auto-orbit</label>
+        </div>
+      </div>
+      <div class="sliders">
+        <div class="slider"><label for="sDist">Distance</label><output id="oDist" for="sDist">22.0 rₛ</output><input type="range" id="sDist" min="0" max="1000" step="1"></div>
+        <div class="slider"><label for="sElev">Height above the disk</label><output id="oElev" for="sElev">9°</output><input type="range" id="sElev" min="-89" max="89" step="1" value="9"></div>
+        <div class="slider"><label for="sTemp">Gas temperature</label><output id="oTemp" for="sTemp">4,700 K</output><input type="range" id="sTemp" min="2000" max="12000" step="100" value="4700"></div>
+        <div class="slider"><label for="sEv">Exposure</label><output id="oEv" for="sEv">0.0 EV</output><input type="range" id="sEv" min="-4" max="4" step="0.1" value="0"></div>
+      </div>
+      <p class="help">Drag the image to orbit. Pinch, or hold Ctrl and scroll, to zoom. Point at anything to see where its light came from. Distances are in Schwarzschild radii (rₛ), the radius of the event horizon.</p>
+    </div>
+  </figure>
+
+  <section class="col" aria-labelledby="h-eq">
+    <h2 id="h-eq">One equation draws the whole picture</h2>
+    <div class="equation" aria-label="u double-prime plus u equals three halves u squared">
+      <span class="term"><span><i>u</i>″ + <i>u</i></span><small>a straight line</small></span>
+      <span class="term"><span>=</span></span>
+      <span class="term gravity" id="gravTerm"><span><span class="frac">³⁄₂</span> <i>u</i>²</span><small>gravity</small></span>
+    </div>
+    <p>Here <var>u</var> is rₛ divided by the ray's distance from the hole, and each prime is a derivative with respect to the angle the ray has swept around it. With the right-hand side set to zero the solution is a straight line. With it, light curves, loops, or falls in.</p>
+    <p>The image above solves this equation for every pixel of every frame, in about <span id="avgSteps">forty</span> fourth-order Runge–Kutta steps per ray in the opening view. Each step applies the straight-line part exactly and approximates only the gravity term, and the steps shorten near the hole, where a ray is most sensitive to error. Switch off <i>Bend light</i> to delete the gravity term and see the same scene in flat space.</p>
+  </section>
+
+  <section aria-labelledby="h-ray">
+    <div class="col" style="display:grid;gap:14px">
+      <h2 id="h-ray">Aim a single ray</h2>
+      <p>Light arrives from the left. Move over the diagram, or use the slider, to choose how far off-centre the ray is aimed. That distance is its impact parameter, <var>b</var>. Far out, light barely bends. At 2.598 rₛ it circles the hole forever. Any closer and it never comes back.</p>
+    </div>
+    <div class="explorer">
+      <div class="panel diagram" id="diagramBox">
+        <svg id="diagram" role="img" aria-label="Light rays arriving from the left and bending around the black hole"></svg>
+        <p class="figcap">Paths computed on the processor in double precision. The highlighted ray is the one you are aiming.</p>
+      </div>
+      <div class="side">
+        <ul class="legend">
+          <li><span class="sw-line"></span>General relativity, exact</li>
+          <li><span class="sw-dot"></span><span id="gpuLegend">Measured on this GPU</span></li>
+        </ul>
+        <div class="chart" id="chartBox">
+          <svg id="chart" role="img" aria-label="Bending angle against impact parameter, exact curve and GPU measurements"></svg>
+          <div class="ctip" id="ctip" hidden></div>
+        </div>
+        <p class="chart-cap">How far the ray is turned from its original direction.</p>
+        <div class="slider">
+          <label for="sB">Impact parameter <var>b</var></label><output id="oB" for="sB" class="mono">3.20 rₛ</output>
+          <input type="range" id="sB" min="0.3" max="10" step="0.001" value="3.2">
+        </div>
+        <div class="readouts">
+          <div><span>What happens</span><strong id="rFate"><span class="pill escape">Escapes</span></strong></div>
+          <div><span>Bend, exact</span><strong id="rExact">—</strong></div>
+          <div><span>Bend, this GPU</span><strong id="rGpu">—</strong></div>
+        </div>
+        <details>
+          <summary>Show the measured points as a table</summary>
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th>b, in rₛ</th><th>Exact</th><th>This GPU</th><th>Difference</th></tr></thead>
+              <tbody id="pointsBody"><tr><td colspan="4">Measuring…</td></tr></tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="checks" aria-labelledby="h-check">
+    <div class="col" style="display:grid;gap:14px">
+      <h2 id="h-check">The page checks its own physics</h2>
+      <p>When this page loaded, the shader that draws the image also traced <span id="nTests">a few thousand</span> test rays on your graphics card. The table compares what happened to them with values general relativity gives exactly.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Check</th><th>General relativity</th><th>Measured here</th><th>Difference</th><th>Result</th></tr></thead>
+        <tbody id="checkBody"><tr><td>Measuring…</td><td></td><td></td><td></td><td></td></tr></tbody>
+      </table>
+    </div>
+    <p class="note col"><span id="checkSummary">Measuring…</span> Graphics cards work in 32-bit numbers, so agreement to within a few tens of parts per million is as close as this method gets.</p>
+  </section>
+
+  <section aria-labelledby="h-model">
+    <h2 id="h-model" class="col">What is modelled, and what is not</h2>
+    <div class="ledger">
+      <div>
+        <h3>In the picture</h3>
+        <ul>
+          <li>Exact light paths around a non-rotating black hole, including the thin photon ring of light that circled it.</li>
+          <li>The view of a camera hovering in place, with the stretching of its own rulers accounted for. That is why the shadow covers exactly half the sky at 1.5 rₛ.</li>
+          <li>Gas on circular orbits from 3 rₛ, the innermost stable orbit, out to 12 rₛ, coolest at the edges.</li>
+          <li>Colour from Planck's law and the CIE standard observer. Motion and gravity shift the light's frequency by a factor <var>g</var>, and a blackbody seen that way is a blackbody at <var>g</var> times the temperature.</li>
+        </ul>
+      </div>
+      <div class="out">
+        <h3>Left out</h3>
+        <ul>
+          <li><b>Spin.</b> Real black holes rotate, which flattens one side of the shadow and drags the disk inward.</li>
+          <li><b>Thickness.</b> The disk is a flat sheet with painted-on turbulence, not a simulated flow.</li>
+          <li><b>Light travel time.</b> You see the whole disk as it is now, not each part as it was when its light left.</li>
+          <li><b>Realistic heat.</b> Gas this close to a real hole glows in ultraviolet and X-rays. The temperature here is chosen so the colours land in visible light.</li>
+          <li><b>The real sky.</b> The stars and the band of the galaxy are generated, not catalogued.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="col">Built by Claude in one session. The physics core is covered by 18 unit tests against textbook results and an independent three-dimensional integrator, written before the renderer.</footer>
+</div>
+
+<script src="physics.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const PI = Math.PI, DEG = 180 / PI;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const FOV_H = 80;                                   // horizontal field of view, degrees
+const TAN_HALF = Math.tan(FOV_H / 2 / DEG);
+const D_MIN = 1.5, D_MAX = 60;
+const fmtInt = n => Math.round(n).toLocaleString('en-US');
+const ppm = (m, e) => Math.abs(m - e) / Math.abs(e) * 1e6;
+const fmtPpm = p => p < 0.05 ? '< 0.1 ppm' : (p < 10 ? p.toFixed(1) : fmtInt(p)) + ' ppm';
+
+const S = {
+  dist: 22, elev: 9, az: 0.55, bend: true, doppler: true, orbit: !reduceMotion,
+  temp: 4700, ev: 0, time: 0,
+  look: 0,     // how far the camera is turned away from the hole, toward its orbit (radians)
+};
+
+// Views. "At the photon sphere" hovers at 1.5 rₛ, where the shadow fills exactly
+// half the sky, and looks along the orbit so the shadow's edge runs down the middle.
+const PRESETS = {
+  tilted: { dist: 22, elev: 9, look: 0 },
+  edge:   { dist: 22, elev: 2, look: 0 },      // at exactly 0° the zero-thickness disk vanishes
+  above:  { dist: 22, elev: 89, look: 0 },
+  sphere: { dist: 1.5, elev: 20, look: PI / 2 },
+};
+let tween = null;
+
+/* ================= GLSL ================= */
+const VERT = `#version 300 es
+void main(){ vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
+
+const COMMON = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+out vec4 outColor;
+uniform sampler2D uBB;       // blackbody: rgb at unit luminance, a = log10 luminance
+uniform sampler2D uTests;
+uniform float uTpeak, uTprof, uLogYPeak, uTime, uDoppler, uG, uRcam, uPix;
+const float PI = 3.14159265358979;
+const float STEP = 0.1;
+const int MAX_STEPS = ${BH.MAX_STEPS};
+const float DISK_IN = 3.0, DISK_OUT = 12.0;
+const float LOG_TMIN = ${Math.log(BH.T_MIN).toFixed(9)}, LOG_TMAX = ${Math.log(BH.T_MAX).toFixed(9)};
+
+// cos and sin of a small angle by series, so every GPU rounds the same way
+vec2 cs(float h){ float h2 = h*h;
+  return vec2(1.0 - h2*(0.5 - h2*(1.0/24.0 - h2*(1.0/720.0 - h2/40320.0))),
+              h*(1.0 - h2*(1.0/6.0 - h2*(1.0/120.0 - h2/5040.0)))); }
+
+// One Runge-Kutta step of u'' + u = K u^2 (Lawson integrating-factor RK4).
+vec2 rk4(vec2 y, float h, float K){
+  vec2 hc = cs(0.5*h), fc = cs(h);
+  float c = hc.x, s = hc.y, C = fc.x, S = fc.y, u = y.x, w = y.y;
+  float n1 = K*u*u;
+  float a = u*c + (w + 0.5*h*n1)*s;
+  float n2 = K*a*a, k2u = -n2*s, k2w = n2*c;
+  a = (u + 0.5*h*k2u)*c + (w + 0.5*h*k2w)*s;
+  float n3 = K*a*a, k3u = -n3*s, k3w = n3*c;
+  a = (u + h*k3u)*C + (w + h*k3w)*S;
+  float n4 = K*a*a, k4u = -n4*S, k4w = n4*C;
+  float vu = u + h/6.0*(2.0*k2u + 2.0*k3u + k4u);
+  float vw = w + h/6.0*(n1 + 2.0*k2w + 2.0*k3w + k4w);
+  return vec2(vu*C + vw*S, -vu*S + vw*C);
+}
+vec2 initState(float u, float cp, float sp, float G){ return vec2(u, -u*sqrt(1.0 - G*u)*cp/max(sp, 1e-7)); }
+
+/* ----- colour ----- */
+vec4 bbTex(float T){ float x = clamp((log(max(T, 1.0)) - LOG_TMIN)/(LOG_TMAX - LOG_TMIN), 0.0, 1.0);
+  return texture(uBB, vec2(x*(511.0/512.0) + 0.5/512.0, 0.5)); }
+vec3 bbRadiance(float T){ if (T < 450.0) return vec3(0.0); vec4 t = bbTex(T); return t.rgb*exp2((t.a - uLogYPeak)*3.3219281); }
+
+/* ----- noise ----- */
+float hash13(vec3 p){ p = fract(p*0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y)*p.z); }
+vec3 hash33(vec3 p){ p = fract(p*vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.xxy + p.yxx)*p.zyx); }
+float vnoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0 - 2.0*f);
+  return mix(mix(mix(hash13(i), hash13(i + vec3(1,0,0)), f.x), mix(hash13(i + vec3(0,1,0)), hash13(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x), mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z); }
+float fbm(vec3 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ s += a*vnoise(p); p = p*2.07 + vec3(3.1, 1.7, 5.3); a *= 0.5; } return s/0.9375; }
+
+/* ----- the gas ----- */
+float diskT(float r){ if (r <= DISK_IN) return 0.0; return pow(r, -0.75)*pow(1.0 - sqrt(DISK_IN/r), 0.25)/uTprof; }
+// Turbulence carried round at the local orbital speed. Two copies fade in and
+// out of step so the shear of differential rotation never winds it up.
+float diskNoise(float r, float theta, float Om){
+  const float P = 36.0;
+  float lr = log(r);
+  float t1 = mod(uTime, P), t2 = mod(uTime + 0.5*P, P);
+  float w1 = 1.0 - abs(2.0*t1/P - 1.0);
+  float a1 = theta + Om*t1, a2 = theta + Om*t2;
+  float s1 = floor(uTime/P)*7.31, s2 = floor((uTime + 0.5*P)/P)*7.31 + 3.7;
+  float n1 = fbm(vec3(cos(a1)*2.4, sin(a1)*2.4, lr*9.0 + s1));
+  float n2 = fbm(vec3(cos(a2)*2.4 + 11.0, sin(a2)*2.4, lr*9.0 + s2));
+  return mix(n2, n1, w1);
+}
+void shadeDisk(vec3 X, float r, float lambda, inout vec3 col, inout float trans){
+  float theta = atan(X.z, X.x);
+  float Om = sqrt(0.5/(r*r*r));
+  float n = diskNoise(r, theta, Om);
+  float T = uTpeak*diskT(r)*(0.74 + 0.52*n);
+  float g = 1.0;
+  if (uDoppler > 0.5) g = sqrt(max(1.0 - (0.5 + uG)/r, 1e-6))/(sqrt(1.0 - uG/uRcam)*(1.0 - Om*lambda));
+  float edge = smoothstep(DISK_IN, DISK_IN + 0.25, r)*(1.0 - smoothstep(DISK_OUT - 3.0, DISK_OUT, r));
+  float alpha = edge*clamp(0.3 + 0.95*n, 0.0, 1.0);
+  col += trans*alpha*bbRadiance(g*T);
+  trans *= 1.0 - alpha;
+}
+
+/* ----- the sky ----- */
+vec3 stars(vec3 D, float N, float density, float flux, float gc){
+  vec3 a = abs(D); vec2 uv; float face, m;
+  if (a.x >= a.y && a.x >= a.z){ uv = D.yz/a.x; face = D.x > 0.0 ? 0.0 : 1.0; m = a.x; }
+  else if (a.y >= a.z){ uv = D.xz/a.y; face = D.y > 0.0 ? 2.0 : 3.0; m = a.y; }
+  else { uv = D.xy/a.z; face = D.z > 0.0 ? 4.0 : 5.0; m = a.z; }
+  vec2 g = (uv*0.5 + 0.5)*N;
+  vec2 cell = floor(g);
+  vec3 h = hash33(vec3(cell, face + N*7.0));
+  if (h.x > density) return vec3(0.0);
+  vec2 ctr = cell + 0.2 + 0.6*h.yz;
+  float ang = length(g - ctr)*2.0/N*m*m;
+  float w = max(uPix*0.85, 0.0006);
+  float h2 = hash13(vec3(cell + 13.0, face + N));
+  float bright = flux*(0.04 + 2.5*pow(h2, 14.0));
+  float T = 2900.0 + 9000.0*pow(hash13(vec3(cell, face*3.0 + 1.0)), 2.0);
+  float I = bright*exp(-ang*ang/(w*w))*(0.0012*0.0012)/(w*w);
+  return I*bbTex(T*gc).rgb;
+}
+vec3 skyColor(vec3 D){
+  float gc = 1.0/sqrt(1.0 - uG/uRcam);           // blueshift seen by a hovering camera
+  vec3 nG = normalize(vec3(0.28, 0.9, -0.33));
+  float lat = dot(D, nG);
+  float clouds = fbm(D*4.0);
+  float dust = smoothstep(0.42, 0.72, fbm(D*9.0 + 3.0));
+  vec3 cG = normalize(cross(nG, vec3(0.2, 0.0, 1.0)));
+  float bulge = 0.45 + 1.4*exp(-(1.0 - dot(D, cG))*3.0);
+  float L = exp(-lat*lat/0.018)*(0.3 + 0.9*clouds)*(1.0 - 0.8*dust*exp(-lat*lat/0.003))*bulge;
+  vec3 col = 0.03*L*mix(bbTex(4300.0*gc).rgb, bbTex(8000.0*gc).rgb, clouds);
+  col += stars(D, 64.0, 0.42, 2.2, gc) + stars(D, 190.0, 0.32, 0.22, gc);
+  return col*gc*gc*gc*gc;
+}
+
+// March one ray. Returns (status, phi, steps, crossings):
+// 1 escaped, 2 fell in, 3 ran out of steps, 4 stopped by opaque gas.
+vec4 trace(vec2 y, float K, float firstCross, vec3 e1, vec3 e2, float lambda, bool diskOn, inout vec3 col, inout float trans){
+  float phi = 0.0, nextC = firstCross, steps = 0.0, nc = 0.0;
+  for (int i = 0; i < MAX_STEPS; i++){
+    float h = STEP/(1.0 + 3.0*y.x*y.x);
+    bool crossing = false;
+    if (phi + h >= nextC){ h = nextC - phi; crossing = true; }
+    vec2 y1 = rk4(y, h, K);
+    steps += 1.0;
+    if (y1.x <= 0.0){
+      for (int k = 0; k < 3; k++){ float d = -y.x/min(y.y, -1e-12); y = rk4(y, d, K); phi += d; }
+      return vec4(1.0, phi, steps, nc);
+    }
+    if (y1.x >= 1.0) return vec4(2.0, phi + h, steps, nc);
+    y = y1; phi += h;
+    if (crossing){
+      nc += 1.0;
+      if (diskOn){
+        float r = 1.0/y.x;
+        if (r >= DISK_IN && r <= DISK_OUT){
+          shadeDisk(r*(cos(phi)*e1 + sin(phi)*e2), r, lambda, col, trans);
+          if (trans < 0.003) return vec4(4.0, phi, steps, nc);
+        }
+      }
+      nextC += PI;
+    }
+  }
+  return vec4(3.0, phi, steps, nc);
+}
+`;
+
+const RENDER_MAIN = `
+uniform vec2 uRes;
+uniform vec3 uCamPos, uFwd, uRight, uUp;
+uniform float uTanHalf, uExposure;
+vec3 aces(vec3 x){ return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
+vec3 srgb(vec3 c){ return mix(c*12.92, 1.055*pow(c, vec3(1.0/2.4)) - 0.055, step(0.0031308, c)); }
+void main(){
+  vec2 p = gl_FragCoord.xy - 0.5*uRes;
+  float sc = 2.0*uTanHalf/uRes.x;
+  vec3 d = normalize(uFwd + p.x*sc*uRight + p.y*sc*uUp);
+  vec3 e1 = uCamPos/uRcam;
+  float cp = dot(d, e1);
+  vec3 perp = d - cp*e1;
+  float sp = length(perp);
+  vec3 e2 = sp > 1e-7 ? perp/sp : normalize(cross(e1, abs(e1.y) < 0.9 ? vec3(0,1,0) : vec3(1,0,0)));
+  vec2 y = initState(1.0/uRcam, cp, sp, uG);
+  float a = e1.y, c = e2.y, first = 1e9;
+  if (abs(a) + abs(c) > 1e-6){ first = mod(atan(-a, c), PI); if (first < 1e-5) first += PI; }
+  float lambda = -(uRcam/sqrt(1.0 - uG/uRcam))*(e1.z*d.x - e1.x*d.z);
+  vec3 col = vec3(0.0); float trans = 1.0;
+  vec4 res = trace(y, 1.5*uG, first, e1, e2, lambda, true, col, trans);
+  if (res.x < 1.5) col += trans*skyColor(cos(res.y)*e1 + sin(res.y)*e2);
+  outColor = vec4(srgb(aces(col*uExposure)), 1.0);
+}`;
+
+const TEST_MAIN = `
+// Each texel is one test ray: (kind, p1, p2, G).
+// kind 0: from infinity, impact parameter p1.  kind 1: from a camera at r = p1,
+// aimed p2 radians off the direction to the hole.
+void main(){
+  vec4 t = texelFetch(uTests, ivec2(gl_FragCoord.xy), 0);
+  vec2 y;
+  if (t.x < 0.5) y = vec2(0.0, 1.0/t.y);
+  else y = initState(1.0/t.y, -cos(t.z), sin(t.z), t.w);
+  vec3 col = vec3(0.0); float trans = 1.0;
+  outColor = trace(y, 1.5*t.w, 1e9, vec3(1,0,0), vec3(0,1,0), 0.0, false, col, trans);
+}`;
+
+/* ================= WebGL setup ================= */
+const canvas = $('view');
+let gl = null, progR = null, progT = null, uR = {}, uT = {}, bbTexture = null, floatTargets = false;
+const tProfPeak = Math.pow(BH.R_PEAK, -0.75) * Math.pow(1 - Math.sqrt(BH.DISK_IN / BH.R_PEAK), 0.25);
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(fsrc) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsrc));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {}, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name; u[name] = gl.getUniformLocation(p, name); }
+  return [p, u];
+}
+function setCommon(u) {
+  const G = S.bend ? 1 : 0;
+  gl.uniform1i(u.uBB, 0);
+  gl.uniform1i(u.uTests, 1);
+  gl.uniform1f(u.uTpeak, S.temp);
+  gl.uniform1f(u.uTprof, tProfPeak);
+  gl.uniform1f(u.uLogYPeak, Math.log10(BH.blackbodyXYZ(S.temp)[1]));
+  gl.uniform1f(u.uTime, S.time);
+  gl.uniform1f(u.uDoppler, S.doppler ? 1 : 0);
+  gl.uniform1f(u.uG, G);
+  gl.uniform1f(u.uRcam, S.dist);
+}
+
+try {
+  gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
+  if (!gl) throw new Error('no webgl2');
+  [progR, uR] = program(COMMON + RENDER_MAIN);
+  floatTargets = !!gl.getExtension('EXT_color_buffer_float');
+  if (floatTargets) [progT, uT] = program(COMMON + TEST_MAIN);
+  bbTexture = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, bbTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 512, 1, 0, gl.RGBA, gl.FLOAT, BH.blackbodyTable(512));
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+} catch (err) {
+  console.warn('Live view unavailable:', err);
+  gl = null;
+  $('nogl').hidden = false;
+  canvas.hidden = true;
+}
+
+/* ================= GPU test rays ================= */
+function makeFloatTex(w, h, data) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  return t;
+}
+// Trace a list of [kind, p1, p2, G] rays on the GPU; returns Float32Array of (status, phi, steps, crossings).
+function gpuTrace(rows) {
+  if (!gl || !progT) return null;
+  const W = Math.min(128, rows.length), H = Math.ceil(rows.length / W);
+  const input = new Float32Array(W * H * 4);
+  rows.forEach((r, i) => input.set(r, i * 4));
+  gl.activeTexture(gl.TEXTURE1);
+  const inTex = makeFloatTex(W, H, input);
+  const outTex = makeFloatTex(W, H, null);
+  const fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, outTex, 0);
+  let out = null;
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) {
+    gl.viewport(0, 0, W, H);
+    gl.useProgram(progT);
+    setCommon(uT);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, inTex);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bbTexture);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    out = new Float32Array(W * H * 4);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.deleteFramebuffer(fb); gl.deleteTexture(inTex); gl.deleteTexture(outTex);
+  return out;
+}
+
+const SWEEP_B = [2.6, 2.61, 2.62, 2.64, 2.67, 2.7, 2.75, 2.8, 2.9, 3, 3.2, 3.4, 3.7, 4, 4.5, 5, 5.5, 6, 7, 8, 9, 10, 15, 20, 30, 50, 100];
+let sweep = [];       // [{b, exact, gpu}]
+
+function boundary(xs, res, escapedAbove) {
+  // last index that is not escaping, followed only by escapes
+  let last = -1;
+  for (let i = 0; i < xs.length; i++) if (res[i * 4] !== 1) last = i;
+  if (last < 0 || last >= xs.length - 1) return null;
+  return 0.5 * (xs[last] + xs[last + 1]);
+}
+
+function runChecks() {
+  const R_CAM = 22;
+  const rows = [], groups = {};
+  const push = (name, list) => { groups[name] = [rows.length, list.length]; rows.push(...list); };
+  push('sweep', SWEEP_B.map(b => [0, b, 0, 1]));
+  const N = 2048, span = 1e-3;
+  const lin = (c, n) => Array.from({ length: n }, (_, i) => c * (1 + (2 * i / (n - 1) - 1) * span));
+  const bScan = lin(BH.B_CRIT, N);
+  push('crit', bScan.map(b => [0, b, 0, 1]));
+  const aShadow = BH.shadowAngle(R_CAM);
+  const sScan = lin(aShadow, N);
+  push('shadow', sScan.map(a => [1, R_CAM, a, 1]));
+  const aRing = BH.einsteinRingAngle(R_CAM);
+  const eScan = lin(aRing, 1024);
+  push('ring', eScan.map(a => [1, R_CAM, a, 1]));
+  const flatB = [1.5, 3, 5, 20];
+  push('flat', flatB.map(b => [0, b, 0, 0]));
+  $('nTests').textContent = fmtInt(rows.length);
+
+  const out = gpuTrace(rows);
+  const slice = name => { const [o, n] = groups[name]; return out.subarray(o * 4, (o + n) * 4); };
+
+  sweep = SWEEP_B.map((b, i) => {
+    const r = slice('sweep');
+    return { b, exact: BH.deflectionExact(b), gpu: r[i * 4] === 1 ? r[i * 4 + 1] - PI : null };
+  });
+  const bend = b => sweep.find(s => s.b === b);
+  const bc = boundary(bScan, slice('crit'));
+  const sh = boundary(sScan, slice('shadow'));
+  let ring = null;
+  { const r = slice('ring');
+    for (let i = 0; i < eScan.length - 1; i++) {
+      const f0 = r[i * 4 + 1] - PI, f1 = r[(i + 1) * 4 + 1] - PI;
+      if (r[i * 4] === 1 && r[(i + 1) * 4] === 1 && f0 > 0 && f1 <= 0) { ring = eScan[i] + (eScan[i + 1] - eScan[i]) * f0 / (f0 - f1); break; }
+    } }
+  let flatDev = 0;
+  { const r = slice('flat'); flatB.forEach((b, i) => { flatDev = Math.max(flatDev, Math.abs(r[i * 4 + 1] - PI)); }); }
+
+  const deg = (v, d = 5) => (v * DEG).toFixed(d) + '°';
+  const rs = (v) => v.toFixed(6) + ' rₛ';
+  const checks = [
+    { name: 'Bending of a ray aimed 50 rₛ off centre', exact: bend(50).exact, got: bend(50).gpu, show: v => deg(v, 6) },
+    { name: 'Bending of a ray aimed 3 rₛ off centre', exact: bend(3).exact, got: bend(3).gpu, show: v => deg(v, 4) },
+    { name: 'Closest aim that still escapes, b꜀', exact: BH.B_CRIT, got: bc, show: rs },
+    { name: 'Radius of the shadow, seen from 22 rₛ', exact: aShadow, got: sh, show: v => deg(v, 5) },
+    { name: 'Radius of the Einstein ring, seen from 22 rₛ', exact: aRing, got: ring, show: v => deg(v, 5) },
+    { name: 'Bending with gravity switched off', exact: 0, got: flatDev, show: v => deg(v, 6), absolute: true },
+  ];
+  const ok = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+  const no = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+  let worst = 0, passed = 0;
+  $('checkBody').innerHTML = checks.map(c => {
+    if (c.got == null) return `<tr><td>${c.name}</td><td class="num">${c.show(c.exact)}</td><td class="num">not found</td><td class="num">—</td><td><span class="result bad">${no} Outside ±0.1%</span></td></tr>`;
+    let diff, pass;
+    if (c.absolute) { diff = (c.got * DEG * 3600).toFixed(3) + '″'; pass = c.got < 1e-5; }
+    else { const p = ppm(c.got, c.exact); worst = Math.max(worst, p); diff = fmtPpm(p); pass = p < 200; }
+    if (pass) passed++;
+    return `<tr><td>${c.name}</td><td class="num">${c.show(c.exact)}</td><td class="num">${c.show(c.got)}</td><td class="num">${diff}</td><td><span class="result ${pass ? 'ok' : 'bad'}">${pass ? ok + ' Agrees' : no + ' Disagrees'}</span></td></tr>`;
+  }).join('');
+  $('checkSummary').textContent = passed === checks.length
+    ? `All ${checks.length} checks agree. The largest difference is ${fmtPpm(worst)}.`
+    : `${passed} of ${checks.length} checks agree within 200 parts per million.`;
+  $('pointsBody').innerHTML = sweep.map(s => `<tr><td class="num">${s.b.toFixed(2)}</td><td class="num">${(s.exact * DEG).toFixed(4)}°</td><td class="num">${s.gpu == null ? '—' : (s.gpu * DEG).toFixed(4) + '°'}</td><td class="num">${s.gpu == null ? '—' : fmtPpm(ppm(s.gpu, s.exact))}</td></tr>`).join('');
+}
+
+function checksUnavailable(why) {
+  $('checkBody').innerHTML = `<tr><td colspan="5">${why}</td></tr>`;
+  $('checkSummary').textContent = 'No measurements on this device.';
+  $('nTests').textContent = 'about five thousand';
+  $('gpuLegend').textContent = 'Measured on this GPU (unavailable here)';
+  sweep = SWEEP_B.map(b => ({ b, exact: BH.deflectionExact(b), gpu: null }));
+  $('pointsBody').innerHTML = sweep.map(s => `<tr><td class="num">${s.b.toFixed(2)}</td><td class="num">${(s.exact * DEG).toFixed(4)}°</td><td class="num">—</td><td class="num">—</td></tr>`).join('');
+}
+
+/* ================= live view ================= */
+let scale = Math.min(window.devicePixelRatio || 1, 1.5), maxScale = scale;
+let visible = true, needsResize = true;
+function cam() {
+  const c = BH.cameraBasis(S.dist, S.elev, S.az);
+  if (!S.look) return c;
+  const { add, scale } = BH.vec, cl = Math.cos(S.look), sl = Math.sin(S.look);
+  return { pos: c.pos, up: c.up,
+    fwd: add(scale(c.fwd, cl), scale(c.right, sl)),
+    right: add(scale(c.right, cl), scale(c.fwd, -sl)) };
+}
+
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const W = Math.max(1, Math.round(w * scale)), H = Math.max(1, Math.round(h * scale));
+  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+}
+function draw() {
+  if (!gl) return;
+  if (needsResize) { resize(); needsResize = false; }
+  const c = cam();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(progR);
+  setCommon(uR);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bbTexture);
+  gl.uniform2f(uR.uRes, canvas.width, canvas.height);
+  gl.uniform3fv(uR.uCamPos, c.pos);
+  gl.uniform3fv(uR.uFwd, c.fwd);
+  gl.uniform3fv(uR.uRight, c.right);
+  gl.uniform3fv(uR.uUp, c.up);
+  gl.uniform1f(uR.uTanHalf, TAN_HALF);
+  gl.uniform1f(uR.uPix, 2 * TAN_HALF / canvas.width);
+  gl.uniform1f(uR.uExposure, Math.pow(2, S.ev));
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+function updateHud() {
+  $('hudDist').textContent = S.dist.toFixed(1) + ' rₛ';
+  $('hudShadow').textContent = (2 * BH.shadowAngle(S.dist, S.bend ? 1 : 0) * DEG).toFixed(1) + '°';
+  $('oDist').textContent = S.dist.toFixed(1) + ' rₛ';
+  $('oElev').textContent = Math.round(S.elev) + '°';
+  $('oTemp').textContent = fmtInt(S.temp) + ' K';
+  $('oEv').textContent = (S.ev >= 0 ? '' : '−') + Math.abs(S.ev).toFixed(1) + ' EV';
+  $('sDist').value = Math.round(1000 * Math.log(S.dist / D_MIN) / Math.log(D_MAX / D_MIN));
+  $('sElev').value = Math.round(S.elev);
+  document.querySelectorAll('.preset').forEach(btn => {
+    const p = PRESETS[btn.dataset.preset];
+    const on = tween ? tween.to === p
+      : Math.abs(S.dist - p.dist) < 0.05 && Math.abs(S.elev - p.elev) < 0.5 && Math.abs(S.look - p.look) < 0.01;
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+function goPreset(name) {
+  const p = PRESETS[name];
+  if (reduceMotion) { tween = null; Object.assign(S, { dist: p.dist, elev: p.elev, look: p.look }); updateHud(); return; }
+  tween = { from: { dist: S.dist, elev: S.elev, look: S.look }, to: p, t0: performance.now(), dur: 1400 };
+  updateHud();
+}
+function stepTween(now) {
+  if (!tween) return;
+  const k = Math.min(1, (now - tween.t0) / tween.dur);
+  const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+  const { from: a, to: b } = tween;
+  S.dist = Math.exp(Math.log(a.dist) + (Math.log(b.dist) - Math.log(a.dist)) * e);
+  S.elev = a.elev + (b.elev - a.elev) * e;
+  S.look = a.look + (b.look - a.look) * e;
+  if (k >= 1) tween = null;
+  updateHud();
+}
+const cancelTween = () => { if (tween) { tween = null; updateHud(); } };
+
+let last = performance.now(), frameAcc = 0, frameN = 0, dragging = false;
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  stepTween(now);
+  // Once you move away from the photon sphere, turn back toward the hole.
+  if (!tween && S.look && S.dist > 2.5) {
+    S.look = S.look < 0.002 ? 0 : S.look * Math.exp(-dt * 3);
+    updateHud();
+  }
+  if (visible && gl && !document.hidden) {
+    if (!reduceMotion) S.time += dt * 6;               // 6 rₛ/c of gas motion per second
+    if (S.orbit && !dragging) { S.az += dt * 0.06; }
+    draw();
+    // adapt resolution to keep the frame rate up
+    frameAcc += dt; frameN++;
+    if (frameAcc > 1.2) {
+      const avg = frameAcc / frameN;
+      if (avg > 0.034 && scale > 0.45) { scale = Math.max(0.45, scale * 0.82); needsResize = true; }
+      else if (avg < 0.019 && scale < maxScale) { scale = Math.min(maxScale, scale * 1.12); needsResize = true; }
+      frameAcc = 0; frameN = 0;
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---- interaction ---- */
+const pointers = new Map();
+let pinchStart = null, moved = 0, tipTimer = 0;
+const clampElev = e => Math.max(-89, Math.min(89, e));
+const setDist = d => { tween = null; S.dist = Math.max(D_MIN, Math.min(D_MAX, d)); updateHud(); };
+
+canvas.addEventListener('pointerdown', e => {
+  cancelTween();
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  moved = 0;
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist };
+  }
+  dragging = true; canvas.classList.add('dragging');
+  $('tip').hidden = true;
+});
+canvas.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId);
+  if (!p) { if (e.pointerType !== 'touch') showTip(e); return; }
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  moved += Math.abs(dx) + Math.abs(dy);
+  if (pointers.size === 2 && pinchStart) {
+    const [a, b] = [...pointers.values()];
+    setDist(pinchStart.dist * pinchStart.d / Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)));
+  } else if (pointers.size === 1) {
+    S.az -= dx * 0.006;
+    S.elev = clampElev(S.elev + dy * 0.25);
+    updateHud();
+  }
+});
+const endPointer = e => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinchStart = null;
+  if (pointers.size === 0) {
+    dragging = false; canvas.classList.remove('dragging');
+    if (moved < 6) { showTip(e); clearTimeout(tipTimer); if (e.pointerType === 'touch') tipTimer = setTimeout(() => { $('tip').hidden = true; }, 4000); }
+  }
+};
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', e => { if (!pointers.size && e.pointerType !== 'touch') $('tip').hidden = true; });
+canvas.addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  setDist(S.dist * Math.exp(e.deltaY * 0.004));
+}, { passive: false });
+canvas.addEventListener('keydown', e => {
+  const k = e.key;
+  if (k.startsWith('Arrow') || k === '+' || k === '=' || k === '-') tween = null;
+  if (k === 'ArrowLeft') S.az += 0.06; else if (k === 'ArrowRight') S.az -= 0.06;
+  else if (k === 'ArrowUp') S.elev = clampElev(S.elev + 2); else if (k === 'ArrowDown') S.elev = clampElev(S.elev - 2);
+  else if (k === '+' || k === '=') setDist(S.dist / 1.08); else if (k === '-') setDist(S.dist * 1.08);
+  else return;
+  e.preventDefault(); updateHud();
+});
+
+/* ---- "where did this light come from?" ---- */
+function ordinal(n) { return ['first', 'second', 'third', 'fourth', 'fifth'][n] || (n + 1) + 'th'; }
+function showTip(e) {
+  if (!gl) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const c = cam();
+  const dir = BH.pixelDir(c, x, rect.height - y, rect.width, rect.height, TAN_HALF);
+  const G = S.bend ? 1 : 0;
+  const res = BH.traceCameraRay(c.pos, dir, { G });
+  const hit = res.hits.find(h => h.r >= BH.DISK_IN && h.r <= BH.DISK_OUT);
+  let title, body;
+  if (hit) {
+    const T = BH.diskTemperature(hit.r, S.temp);
+    const order = hit.index === 0 ? 'Its light came on the most direct path.'
+      : hit.index === 1 ? 'This is a second image of the gas: its light curved around the hole before reaching you.'
+      : 'This light circled the hole before reaching you. It belongs to the photon ring.';
+    let shift = 'Frequency shifts are switched off, so you see the gas in its own colour.';
+    if (S.doppler) {
+      const g = BH.redshift(hit.r, res.lambda, S.dist, G);
+      shift = `Its light arrives ${g >= 1 ? g.toFixed(2) + '× bluer' : (1 / g).toFixed(2) + '× redder'}, so ${fmtInt(T)} K gas looks like ${fmtInt(T * g)} K.`;
+    }
+    title = `Gas at ${hit.r.toFixed(1)} rₛ`;
+    body = `${order} ${shift}`;
+  } else if (res.status === BH.ESCAPED) {
+    const bendDeg = (res.phi - res.psi) * DEG;
+    const loops = Math.floor((res.phi - res.psi) / (2 * PI));
+    title = 'Starlight';
+    body = `From the distant sky, turned ${Math.abs(bendDeg).toFixed(1)}° on its way here` + (loops >= 1 ? `, after circling the hole ${loops === 1 ? 'once' : loops + ' times'}.` : '.');
+    if (!S.bend) body = 'From the distant sky, in a straight line. Gravity is switched off.';
+  } else if (res.status === BH.TIMEOUT) {
+    title = 'Photon sphere';
+    body = 'Traced backward, this ray keeps circling at 1.5 rₛ. Light here has orbited the hole several times.';
+  } else {
+    title = 'Shadow';
+    body = S.bend ? 'No light comes from here. Traced backward, this ray falls through the event horizon.'
+                  : 'No light comes from here. With gravity off, the hole is a black ball one rₛ across.';
+  }
+  const tip = $('tip');
+  tip.innerHTML = `<b>${title}</b>${body}`;
+  tip.hidden = false;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let left = x + 16, top = y + 16;
+  if (left + tw > rect.width - 8) left = x - tw - 16;
+  if (top + th > rect.height - 8) top = y - th - 16;
+  tip.style.left = Math.max(8, left) + 'px';
+  tip.style.top = Math.max(8, top) + 'px';
+}
+
+/* ---- controls ---- */
+$('tBend').checked = S.bend; $('tDoppler').checked = S.doppler; $('tOrbit').checked = S.orbit;
+$('tBend').addEventListener('change', e => { S.bend = e.target.checked; $('gravTerm').classList.toggle('off', !S.bend); updateHud(); });
+$('tDoppler').addEventListener('change', e => { S.doppler = e.target.checked; });
+$('tOrbit').addEventListener('change', e => { S.orbit = e.target.checked; });
+$('sDist').addEventListener('input', e => { tween = null; S.dist = D_MIN * Math.pow(D_MAX / D_MIN, e.target.value / 1000); updateHud(); });
+$('sElev').addEventListener('input', e => { tween = null; S.elev = +e.target.value; updateHud(); });
+document.querySelectorAll('.preset').forEach(btn => btn.addEventListener('click', () => goPreset(btn.dataset.preset)));
+$('sTemp').addEventListener('input', e => { S.temp = +e.target.value; updateHud(); });
+$('sEv').addEventListener('input', e => { S.ev = +e.target.value; updateHud(); });
+
+new ResizeObserver(() => { needsResize = true; }).observe(canvas);
+new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe($('stage'));
+
+// Average step count for the opening view, from the CPU mirror of the shader.
+(function countSteps() {
+  const c = BH.cameraBasis(22, 9, 0.55);
+  let total = 0, n = 0;
+  for (let j = 0; j < 27; j++) for (let i = 0; i < 48; i++) {
+    const dir = BH.pixelDir(c, (i + 0.5) * 20, (j + 0.5) * 20, 960, 540, TAN_HALF);
+    total += BH.traceCameraRay(c.pos, dir, { stopAtDisk: true }).steps; n++;
+  }
+  const avg = total / n;
+  const words = { 20: 'twenty', 25: 'twenty-five', 30: 'thirty', 35: 'thirty-five', 40: 'forty', 45: 'forty-five', 50: 'fifty', 55: 'fifty-five', 60: 'sixty' };
+  const r5 = Math.round(avg / 5) * 5;
+  $('avgSteps').textContent = words[r5] || String(Math.round(avg));
+})();
+
+/* ================= single-ray explorer ================= */
+const SVGNS = 'http://www.w3.org/2000/svg';
+let rayB = 3.2, raySign = 1;
+
+function rayPath(b) {
+  // from infinity on the left; polar angle pi - phi
+  let u = 0, w = 1 / b, phi = 0;
+  const pts = [];
+  const h = 0.01;
+  for (let i = 0; i < 20000 && phi < 12 * PI; i++) {
+    const [u1, w1] = BH.rk4(u, w, h, 1.5);
+    if (u1 <= 0) { pts.push([-Math.cos(phi + h) * 80, Math.sin(phi + h) * 80]); return { pts, fate: 'escape' }; }
+    if (u1 >= 1) { pts.push([-Math.cos(phi + h) / u1, Math.sin(phi + h) / u1]); return { pts, fate: 'capture' }; }
+    u = u1; w = w1; phi += h;
+    const r = 1 / u;
+    if (r < 80) pts.push([-Math.cos(phi) * r, Math.sin(phi) * r]);
+    else if (!pts.length || pts.length === 0) pts.push([-Math.cos(phi) * 80, Math.sin(phi) * 80]);
+  }
+  return { pts, fate: 'orbit' };
+}
+
+let diagramGeom = null;
+function drawDiagram() {
+  const box = $('diagramBox'), svg = $('diagram');
+  const W = box.clientWidth, H = Math.round(Math.min(460, Math.max(260, W * 0.66)));
+  const xr = W < 500 ? 7 : 9;
+  const k = W / (2 * xr);
+  const yr = H / 2 / k;
+  diagramGeom = { W, H, k, yr };
+  const X = x => (W / 2 + x * k).toFixed(1), Y = y => (H / 2 - y * k).toFixed(1);
+  const path = pts => 'M' + pts.map(p => X(p[0]) + ' ' + Y(p[1])).join('L');
+  let s = `<defs><clipPath id="clipD"><rect width="${W}" height="${H}"/></clipPath>
+    <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" fill="var(--accent)"/></marker></defs>
+    <rect width="${W}" height="${H}" fill="var(--surface)"/><g clip-path="url(#clipD)">`;
+  // fan of rays
+  for (let i = 1; i <= Math.floor(yr / 0.6); i++) for (const sg of [1, -1]) {
+    const b = i * 0.6;
+    const { pts } = rayPath(b);
+    s += `<path d="${path(pts.map(p => [p[0], sg * p[1]]))}" fill="none" stroke="var(--ray)" stroke-width="1" opacity="0.45"/>`;
+  }
+  // critical impact parameter guides
+  for (const sg of [1, -1]) s += `<line x1="0" x2="${X(0)}" y1="${Y(sg * BH.B_CRIT)}" y2="${Y(sg * BH.B_CRIT)}" stroke="var(--faint)" stroke-dasharray="3 4" stroke-width="1"/>`;
+  s += `<text x="8" y="${(+Y(-BH.B_CRIT) + 15).toFixed(1)}" fill="var(--muted)" font-size="11" font-family="var(--font-mono)">b = 2.598 rₛ</text>`;
+  // photon sphere and horizon
+  s += `<circle cx="${X(0)}" cy="${Y(0)}" r="${(1.5 * k).toFixed(1)}" fill="none" stroke="var(--accent)" stroke-dasharray="2 3" stroke-width="1" opacity="0.8"/>`;
+  s += `<circle cx="${X(0)}" cy="${Y(0)}" r="${k.toFixed(1)}" fill="var(--hole)" stroke="var(--line)"/>`;
+  s += `<text x="${(+X(0) + 1.5 * k * 0.72 + 6).toFixed(1)}" y="${(+Y(0) + 1.5 * k * 0.72 + 14).toFixed(1)}" fill="var(--muted)" font-size="11" font-family="var(--font-mono)">photon sphere, 1.5 rₛ</text>`;
+  // highlighted ray
+  const { pts, fate } = rayPath(rayB);
+  const hp = pts.map(p => [p[0], raySign * p[1]]);
+  s += `<path d="${path(hp)}" fill="none" stroke="var(--accent)" stroke-width="2.25" stroke-linejoin="round"/>`;
+  const y0 = raySign * rayB;
+  s += `<line x1="2" x2="26" y1="${Y(y0)}" y2="${Y(y0)}" stroke="var(--accent)" stroke-width="2" marker-end="url(#arr)"/>`;
+  s += `</g><g font-family="var(--font-mono)" font-size="11" fill="var(--muted)"><text x="${W - 8}" y="${H - 10}" text-anchor="end">1 rₛ = ${k.toFixed(0)} px</text></g>`;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.innerHTML = s;
+  return fate;
+}
+
+const CH = { padL: 46, padR: 12, padT: 10, padB: 36, bMin: 2.5, bMax: 10, yMin: 8, yMax: 1100 };
+let chartGeom = null;
+function drawChart() {
+  const box = $('chartBox'), svg = $('chart');
+  const W = box.clientWidth, H = Math.round(Math.max(200, Math.min(300, W * 0.62)));
+  const x = b => CH.padL + (b - CH.bMin) / (CH.bMax - CH.bMin) * (W - CH.padL - CH.padR);
+  const y = d => CH.padT + (1 - (Math.log(d) - Math.log(CH.yMin)) / (Math.log(CH.yMax) - Math.log(CH.yMin))) * (H - CH.padT - CH.padB);
+  chartGeom = { x, y, W, H };
+  let s = '';
+  for (const t of [10, 45, 90, 180, 360, 720]) {
+    s += `<line x1="${CH.padL}" x2="${W - CH.padR}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}" stroke="var(--line)" stroke-width="1"/>`;
+    s += `<text x="${CH.padL - 6}" y="${(y(t) + 3.5).toFixed(1)}" text-anchor="end">${t}°</text>`;
+  }
+  for (const t of [3, 4, 5, 6, 7, 8, 9, 10]) s += `<text x="${x(t).toFixed(1)}" y="${H - CH.padB + 16}" text-anchor="middle">${t}</text>`;
+  s += `<text x="${(CH.padL + (W - CH.padR)) / 2}" y="${H - 4}" text-anchor="middle">Impact parameter b, in rₛ</text>`;
+  s += `<line x1="${CH.padL}" x2="${W - CH.padR}" y1="${H - CH.padB}" y2="${H - CH.padB}" stroke="var(--faint)" stroke-width="1"/>`;
+  // b_c
+  s += `<line x1="${x(BH.B_CRIT).toFixed(1)}" x2="${x(BH.B_CRIT).toFixed(1)}" y1="${CH.padT}" y2="${H - CH.padB}" stroke="var(--faint)" stroke-dasharray="3 4"/>`;
+  // exact curve
+  const pts = [];
+  for (let i = 0; i <= 320; i++) {
+    const b = BH.B_CRIT + Math.pow(10, -4 + i / 320 * (4 + Math.log10(CH.bMax - BH.B_CRIT)));
+    const d = BH.deflectionExact(b) * DEG;
+    if (d > CH.yMax) continue;
+    pts.push(`${x(b).toFixed(1)} ${y(d).toFixed(1)}`);
+  }
+  s += `<path d="M${pts.join('L')}" fill="none" stroke="var(--series-exact)" stroke-width="2" stroke-linejoin="round"/>`;
+  // current b
+  if (rayB > BH.B_CRIT && rayB <= CH.bMax) {
+    const d = BH.deflectionExact(rayB) * DEG;
+    if (d <= CH.yMax) {
+      s += `<line x1="${x(rayB).toFixed(1)}" x2="${x(rayB).toFixed(1)}" y1="${y(d).toFixed(1)}" y2="${H - CH.padB}" stroke="var(--series-exact)" stroke-width="1" opacity="0.5"/>`;
+      s += `<circle cx="${x(rayB).toFixed(1)}" cy="${y(d).toFixed(1)}" r="5.5" fill="var(--surface)" stroke="var(--series-exact)" stroke-width="2"/>`;
+    }
+  }
+  // GPU points
+  for (const p of sweep) {
+    if (p.gpu == null || p.b > CH.bMax) continue;
+    s += `<circle cx="${x(p.b).toFixed(1)}" cy="${y(p.gpu * DEG).toFixed(1)}" r="4" fill="var(--series-gpu)" stroke="var(--surface)" stroke-width="2"/>`;
+  }
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.innerHTML = `<g font-family="var(--font-mono)" font-size="11" fill="var(--muted)">${s}</g>`;
+}
+
+$('chart').addEventListener('pointermove', e => {
+  if (!chartGeom) return;
+  const r = $('chart').getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  let best = null, bd = 22;
+  for (const p of sweep) {
+    if (p.gpu == null || p.b > CH.bMax) continue;
+    const dd = Math.hypot(chartGeom.x(p.b) - mx, chartGeom.y(p.gpu * DEG) - my);
+    if (dd < bd) { bd = dd; best = p; }
+  }
+  const t = $('ctip');
+  if (!best) { t.hidden = true; return; }
+  t.innerHTML = `<b>b = ${best.b.toFixed(2)} rₛ</b><br>Exact ${(best.exact * DEG).toFixed(4)}°<br>This GPU ${(best.gpu * DEG).toFixed(4)}°<br>Difference ${fmtPpm(ppm(best.gpu, best.exact))}`;
+  t.hidden = false;
+  const px = chartGeom.x(best.b), py = chartGeom.y(best.gpu * DEG);
+  t.style.left = Math.min(px + 10, chartGeom.W - t.offsetWidth) + 'px';
+  t.style.top = Math.max(0, py - t.offsetHeight - 10) + 'px';
+});
+$('chart').addEventListener('pointerleave', () => { $('ctip').hidden = true; });
+
+function updateRay() {
+  $('oB').textContent = rayB.toFixed(2) + ' rₛ';
+  $('sB').value = rayB;
+  const fate = drawDiagram();
+  drawChart();
+  const exact = BH.deflectionExact(rayB);
+  let fateHtml;
+  if (fate === 'capture') fateHtml = '<span class="pill capture">Falls in</span>';
+  else if (fate === 'orbit') fateHtml = '<span class="pill">Circles for a long time</span>';
+  else {
+    const loops = Math.floor((exact + PI) / (2 * PI));
+    fateHtml = `<span class="pill escape">${loops >= 1 ? `Escapes after ${loops === 1 ? 'a loop' : loops + ' loops'}` : 'Escapes'}</span>`;
+  }
+  $('rFate').innerHTML = fateHtml;
+  $('rExact').textContent = isFinite(exact) ? (exact * DEG).toFixed(3) + '°' : '—';
+  let gpuText = '—';
+  if (isFinite(exact) && gl && progT) {
+    const r = gpuTrace([[0, rayB, 0, 1]]);
+    if (r && r[0] === 1) gpuText = ((r[1] - PI) * DEG).toFixed(3) + '°';
+  }
+  $('rGpu').textContent = gpuText;
+}
+
+let rafRay = 0;
+function setRay(b, sign) {
+  rayB = Math.max(0.3, Math.min(10, b));
+  if (sign) raySign = sign;
+  if (!rafRay) rafRay = requestAnimationFrame(() => { rafRay = 0; updateRay(); });
+}
+$('sB').addEventListener('input', e => setRay(+e.target.value));
+$('diagram').addEventListener('pointermove', e => {
+  if (!diagramGeom) return;
+  const r = $('diagram').getBoundingClientRect();
+  const yw = (diagramGeom.H / 2 - (e.clientY - r.top) * diagramGeom.H / r.height) / diagramGeom.k;
+  setRay(Math.abs(yw), yw >= 0 ? 1 : -1);
+});
+new ResizeObserver(() => { if (!rafRay) rafRay = requestAnimationFrame(() => { rafRay = 0; updateRay(); }); }).observe($('diagramBox'));
+
+/* ================= start ================= */
+updateHud();
+if (gl && progT) {
+  try { runChecks(); } catch (err) { console.warn(err); checksUnavailable('The test rays could not be read back from this graphics card.'); }
+} else if (gl) checksUnavailable('This graphics card cannot store 32-bit results, which the checks need.');
+else checksUnavailable('These checks run on the graphics card and need WebGL 2.');
+updateRay();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

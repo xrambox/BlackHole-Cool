@@ -1,0 +1,13 @@
+{
+  "name": "black-hole-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A Schwarzschild black hole and its accretion disk, ray traced live in WebGL 2 with general relativity.",
+  "scripts": {
+    "test": "node --test test/physics.test.js",
+    "build": "npm test && node scripts/build.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
